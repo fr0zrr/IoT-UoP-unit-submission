@@ -1,0 +1,105 @@
+#include <WiFi.h>
+#include <PubSubClient.h> //this is the mqtt library
+ 
+#define LED 2 //redundant
+ 
+//Enter your wifi credentials
+const char* ssid = "Home";  //SSID of wifi network to be used
+const char* password =  "***********"; //Password censored for privacy reasons
+ 
+//mqtt server configuration
+const char* mqttServer = "192.168.3.27";    //Enter Your mqttServer address
+const int mqttPort = 1883;       //Port number
+const char* mqttUser = ""; //User empty due to lax Mosquitto setup
+const char* mqttPassword = ""; //Password empty due to lax Mosquitto setup
+ 
+WiFiClient espClient; 
+PubSubClient client(espClient);
+
+int RELAY_PIN = 4; // this is the pin the relay singal pin is connected to
+int MOISTURE_PIN = 34; // this is the pin where the values from the YL69 moisture sensor are read from
+ 
+void setup() {
+  
+  delay(1000);
+  pinMode(LED,OUTPUT); // redundant
+  Serial.begin(115200);
+
+  pinMode (RELAY_PIN, OUTPUT); //Here the relay pin is initialised as an output pin for outpitting a signal
+  pinMode (MOISTURE_PIN, INPUT); //Here the moisture pin is initialised as an input pin for reading information
+ 
+  WiFi.begin(ssid, password); // wifi communications begin here using the credentials defined earlier
+ 
+  while (WiFi.status() != WL_CONNECTED) { //if wifi isn't connected, it'll show the message directly below via serial
+    delay(500);
+    Serial.println("Connecting to WiFi..");
+  }
+  Serial.print("Connected to WiFi :"); //if wifi DOES connect, it shows this message
+  Serial.println(WiFi.SSID()); // just an extra check to show which wifi network the device connects to
+ 
+  client.setServer(mqttServer, mqttPort); //this establishes the mqtt server details via variables filled in earlier
+  client.setCallback(MQTTcallback); 
+ 
+  while (!client.connected()) {
+    Serial.println("Connecting to MQTT..."); //before a successful connection to the mqtt server, this serial message appears
+ 
+    if (client.connect("ESP32", mqttUser, mqttPassword )) { //esp32 connects with the name ESP32, using the predefined username and pass
+ 
+      Serial.println("connected");  //once successfully connected, this message shows in the serial monitor
+ 
+    } else {
+ 
+      Serial.print("failed with state "); //if the connection to the mqtt server fails, this message is shown in serial
+      Serial.println(client.state());  //this will follow the fail message to show that the error code for further diagnostics
+      delay(2000);
+ 
+    }
+  }
+ 
+  client.subscribe("watertower/state"); //here the ESP32 subscribes to our topic
+}
+ 
+void MQTTcallback(char* topic, byte* payload, unsigned int length) {
+ 
+  Serial.print("Message arrived in topic: ");
+  Serial.println(topic); // shows what topic a message arrived from
+  Serial.print("Message:");
+ 
+  String message;
+  for (int i = 0; i < length; i++) {
+    message = message + (char)payload[i];  //converts bytes into string format
+  }
+   Serial.print(message);
+  if(message == "#on") {digitalWrite(RELAY_PIN,HIGH);}   //pump on command
+  if(message == "#off") {digitalWrite(RELAY_PIN,LOW);} //pump off command
+  
+ 
+  Serial.println();
+  Serial.println("-----------------------");  
+}
+ 
+void loop() {
+
+  int mois = analogRead(MOISTURE_PIN); //initialises the analogue readout from the moisture pin and assigns it to 'mois' variable
+  Serial.print(mois); //prints the value of the 'mois' variable
+  Serial.print(" -");
+  //these values need to be tuned in manually as they vary due to different chemicals in the local water creating different resistances within the water
+  if(mois >= 2000){ //if the moisture value is this high, the sensor must be disconnected
+    Serial.println("Sensor is not in the soil or disconnected");
+  }
+  if(mois < 2000 && mois >= 1600){ //if the moisture readout is less than 2000 and more or equal to 1600 'DRY' is published in 'watertower/moisture' topic
+    Serial.println("Soil is DRY");
+    client.publish("watertower/moisture", "DRY");
+  }
+  if(mois < 1600 && mois >= 1370){ //if the moisture readout is less than 1600 and more or equal to 1370 'MOIST' is published in 'watertower/moisture' topic
+    Serial.println("Soil is MOIST");
+    client.publish("watertower/moisture", "MOIST");
+  }
+  if(mois < 1370){
+    Serial.println("FLOODED"); //if the moisture readout is less than 1370 'FLOODED' is published in 'watertower/moisture' topic as moisture is very high
+    client.publish("watertower/moisture", "FLOODED");
+  }
+  delay(1000);
+  
+  client.loop();
+}
